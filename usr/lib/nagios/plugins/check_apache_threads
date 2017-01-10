@@ -1,0 +1,140 @@
+#!/bin/sh
+# File: /usr/lib64/nagios/plugins/check_apache_threads
+# Author: bgstack15@gmail.com
+# Startdate: 2017-01-09 15:53
+# Title: Nagios Check for Apache Threads
+# Purpose: For a troublesome dmz wordpress host
+# Package: nagios-plugins-apache-threads
+# History:
+# Usage:
+#    In nagios/nconf, use this checkcommand check command line: $USER1$/check_by_ssh -H $HOSTADDRESS$ -C "$USER1$/check_apache_threads -w $ARG1$ -c $ARG2$"
+# Reference: general design /usr/lib64/nagios/plugins/check_sensors
+#    general design http://www.kernel-panic.it/openbsd/nagios/nagios6.html
+#    case -w http://www.linuxquestions.org/questions/programming-9/ash-test-is-string-a-contained-in-string-b-671773/
+# Improve:
+
+PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
+
+PROGNAME=`basename $0`
+PROGPATH=`echo $0 | sed -e 's,[\\/][^\\/][^\\/]*$,,'`
+REVISION="0.0.1"
+
+. $PROGPATH/utils.sh
+
+
+print_usage() {
+   cat <<EOF
+Usage: $PROGNAME -w <thresh_warn> -c <thresh_crit>
+EOF
+}
+
+print_help() {
+   print_revision $PROGNAME $REVISION
+   echo ""
+   print_usage
+   echo ""
+   echo "This plugin checks for the number of active apache threads."
+   echo ""
+   support
+   exit $STATE_OK
+}
+
+
+# MAIN
+
+# Total httpd threads
+tot_apache_threads="$( ps -ef | grep -ciE "httpd$" )"
+verbosity=0
+thresh_warn=
+thresh_crit=
+
+while test -n "${1}";
+do
+   case "$1" in
+      --help|-h)
+         print_help
+         exit $STATE_OK
+         ;;
+      --version|-V)
+         print_revision $PROGNAME $REVISION
+         exit $STATE_OK
+         ;;
+      -v | --verbose)
+         verbosity=$(( verbosity + 1 ))
+         shift
+         ;;
+      -w | --warning | -c | --critical)
+         if [[ -z "$2" || "$2" = -* ]];
+         then
+            # Threshold not provided
+            echo "$PROGNAME: Option '$1' requires an argument."
+            print_usage
+            exit $STATE_UNKNOWN
+         elif [[ "$2" = +([0-9]) ]];
+         then
+            # Threshold is a number
+            thresh="$2"
+         # use for a percentage template, from reference 2
+         #elif [[ "$2" = +([0-9])% ]]; then
+         #   # Threshold is a percentage
+         #   thresh=$(( tot_mem * ${2%\%} / 100 ))
+         else
+            # Threshold is not a number or other valid input
+            echo "$PROGNAME: Threshold must be an integer."
+            print_usage
+            exit $STATE_UNKNOWN
+         fi
+         case "$1" in *-w*) thresh_warn=$thresh;; *) thresh_crit=$thresh;; esac
+         shift 2
+         ;;
+      -?)
+         print_usage
+         exit $STATE_OK
+         ;;
+      *)
+         echo "$PROGNAME: Invalid option '$1'"
+         print_usage
+         exit $STATE_UNKNOWN
+         ;;
+   esac
+done
+
+if test -z "$thresh_warn" || test -z "$thresh_crit";
+then
+   # One or both values were unspecified
+   echo "$PROGNAME: Threshold not set"
+   print_usage
+   exit $STATE_UNKNOWN
+elif test "$thresh_crit" -le "$thresh_warn";
+then
+   echo "$PROGNAME: Critical value must be greater than warning value."
+   print_usage
+   exit $STATE_UNKNOWN
+fi
+
+if test "$verbosity" -ge 2;
+then
+   # Print debugging information
+   /bin/cat <<EOF
+Debugging information:
+   Warning threshold: $thresh_warn
+   Critical threshold: $thresh_crit
+   Verbosity level: $verbosity
+   Apache threads: ${tot_apache_threads}
+EOF
+fi
+
+if test "${tot_apache_threads}" -gt "${thresh_crit}";
+then
+   # too many apache threads
+   echo "APACHE CRITICAL - $tot_apache_threads"
+   exit $STATE_CRITICAL
+elif test "${tot_apache_threads}" -gt "${thresh_warn}";
+then
+   echo "APACHE WARNING - $tot_apache_threads"
+   exit $STATE_WARNING
+else
+   # fine
+   echo "APACHE OK - $tot_apache_threads"
+   exit $STATE_OK
+fi
